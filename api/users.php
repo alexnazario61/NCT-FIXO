@@ -9,7 +9,7 @@ $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
 switch ($action) {
     case 'list':
-        $stmt = $pdo->query("
+        $result = $conn->query("
             SELECT 
                 u.*, 
                 COUNT(p.id) as phone_count 
@@ -18,29 +18,44 @@ switch ($action) {
             GROUP BY u.id
             ORDER BY u.name
         ");
-        echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+        
+        $users = [];
+        while ($row = $result->fetch_assoc()) {
+            $users[] = $row;
+        }
+        
+        echo json_encode($users);
         break;
 
     case 'get':
         $id = $_GET['id'] ?? 0;
         if ($id) {
-            $stmt = $pdo->prepare("
+            $stmt = $conn->prepare("
                 SELECT u.*, p.number 
                 FROM users u 
                 LEFT JOIN phone_numbers p ON u.id = p.user_id 
                 WHERE u.id = ?
             ");
-            $stmt->execute([$id]);
-            echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+            $stmt->bind_param("i", $id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            
+            $userData = [];
+            while ($row = $result->fetch_assoc()) {
+                $userData[] = $row;
+            }
+            
+            echo json_encode($userData);
         }
         break;
 
     case 'create':
         $name = $_POST['name'] ?? '';
         if ($name) {
-            $stmt = $pdo->prepare("INSERT INTO users (name) VALUES (?)");
-            $stmt->execute([$name]);
-            echo json_encode(['success' => true, 'id' => $pdo->lastInsertId()]);
+            $stmt = $conn->prepare("INSERT INTO users (name) VALUES (?)");
+            $stmt->bind_param("s", $name);
+            $stmt->execute();
+            echo json_encode(['success' => true, 'id' => $conn->insert_id]);
         }
         break;
 }

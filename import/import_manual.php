@@ -253,13 +253,20 @@ $data = <<<EOD
 EOD;
 
 try {
-    $pdo->beginTransaction();
+    // Inicia a transação
+    $conn->begin_transaction();
     
     // Array para controle de números únicos e log
     $processedNumbers = [];
     $duplicateNumbers = [];
     $invalidNumbers = [];
     $totalNumbers = 0;
+    
+    // Limpa as tabelas
+    $conn->query("SET FOREIGN_KEY_CHECKS = 0");
+    $conn->query("TRUNCATE TABLE phone_numbers");
+    $conn->query("TRUNCATE TABLE users");
+    $conn->query("SET FOREIGN_KEY_CHECKS = 1");
     
     // Converte os dados em array
     $lines = explode("\n", $data);
@@ -279,9 +286,10 @@ try {
             $companyName = trim($matches[1]);
             if (!isset($companies[$companyName]) && 
                 in_array($companyName, ['LYONFIBER', 'FALCONET', 'LIVE CONECT TELECOMUNICACOES', 'IDEAL FIBER', 'ERICK TELECOM'])) {
-                $stmt = $pdo->prepare("INSERT INTO users (name, is_company) VALUES (?, 1)");
-                $stmt->execute([$companyName]);
-                $companies[$companyName] = $pdo->lastInsertId();
+                $stmt = $conn->prepare("INSERT INTO users (name, is_company) VALUES (?, 1)");
+                $stmt->bind_param("s", $companyName);
+                $stmt->execute();
+                $companies[$companyName] = $conn->insert_id;
             }
         }
     }
@@ -321,13 +329,15 @@ try {
                 
                 if (isset($companies[$companyName])) {
                     // Criar subcliente
-                    $stmt = $pdo->prepare("INSERT INTO sub_clients (name, company_id) VALUES (?, ?)");
-                    $stmt->execute([$clientName, $companies[$companyName]]);
-                    $subClientId = $pdo->lastInsertId();
+                    $stmt = $conn->prepare("INSERT INTO sub_clients (name, company_id) VALUES (?, ?)");
+                    $stmt->bind_param("si", $clientName, $companies[$companyName]);
+                    $stmt->execute();
+                    $subClientId = $conn->insert_id;
                     
                     // Inserir número vinculado ao subcliente
-                    $stmt = $pdo->prepare("INSERT INTO phone_numbers (number, user_id, sub_client_id) VALUES (?, ?, ?)");
-                    $stmt->execute([$number, $companies[$companyName], $subClientId]);
+                    $stmt = $conn->prepare("INSERT INTO phone_numbers (number, user_id, sub_client_id) VALUES (?, ?, ?)");
+                    $stmt->bind_param("sii", $number, $companies[$companyName], $subClientId);
+                    $stmt->execute();
                 }
             } else {
                 // Cliente individual ou empresa
@@ -341,19 +351,22 @@ try {
                 if (isset($users[$originalName])) {
                     $user_id = $users[$originalName];
                 } else {
-                    $stmt = $pdo->prepare("INSERT INTO users (name, is_company) VALUES (?, ?)");
-                    $stmt->execute([$originalName, $isCompany]);
-                    $user_id = $pdo->lastInsertId();
+                    $stmt = $conn->prepare("INSERT INTO users (name, is_company) VALUES (?, ?)");
+                    $stmt->bind_param("si", $originalName, $isCompany);
+                    $stmt->execute();
+                    $user_id = $conn->insert_id;
                     $users[$originalName] = $user_id;
                 }
                 
-                $stmt = $pdo->prepare("INSERT INTO phone_numbers (number, user_id) VALUES (?, ?)");
-                $stmt->execute([$number, $user_id]);
+                $stmt = $conn->prepare("INSERT INTO phone_numbers (number, user_id) VALUES (?, ?)");
+                $stmt->bind_param("si", $number, $user_id);
+                $stmt->execute();
             }
         } else {
             // Adiciona número sem vínculo com cliente
-            $stmt = $pdo->prepare("INSERT INTO phone_numbers (number) VALUES (?)");
-            $stmt->execute([$number]);
+            $stmt = $conn->prepare("INSERT INTO phone_numbers (number) VALUES (?)");
+            $stmt->bind_param("s", $number);
+            $stmt->execute();
         }
         
         $numbers[$number] = true;
@@ -361,7 +374,7 @@ try {
     }
     
     // Commit da transação
-    $pdo->commit();
+    $conn->commit();
     
     // Gerar relatório
     echo "Relatório de Importação:\n";
@@ -388,8 +401,8 @@ try {
     }
     
 } catch (Exception $e) {
-    if ($pdo->inTransaction()) {
-        $pdo->rollBack();
+    if ($conn->in_transaction) {
+        $conn->rollback();
     }
     echo "Erro durante a importação: " . $e->getMessage() . "\n";
     error_log($e->getTraceAsString());
