@@ -254,7 +254,9 @@ EOD;
 
 try {
     // Inicia a transação
+    $transaction_active = false;
     $conn->begin_transaction();
+    $transaction_active = true;
     
     // Array para controle de números únicos e log
     $processedNumbers = [];
@@ -266,6 +268,7 @@ try {
     $conn->query("SET FOREIGN_KEY_CHECKS = 0");
     $conn->query("TRUNCATE TABLE phone_numbers");
     $conn->query("TRUNCATE TABLE users");
+    $conn->query("TRUNCATE TABLE sub_clients");
     $conn->query("SET FOREIGN_KEY_CHECKS = 1");
     
     // Converte os dados em array
@@ -274,6 +277,7 @@ try {
     // Arrays para controle
     $companies = [];
     $users = [];
+    $subClients = []; // Array para controle de sub-clientes já inseridos
     $numbers = [];
     $count = 0;
     
@@ -327,16 +331,45 @@ try {
                 $clientName = trim($matches[1]);
                 $companyName = trim($matches[2]);
                 
+                // Pular entradas vazias
+                if (empty($clientName)) {
+                    continue;
+                }
+                
                 if (isset($companies[$companyName])) {
-                    // Criar subcliente
-                    $stmt = $conn->prepare("INSERT INTO sub_clients (name, company_id) VALUES (?, ?)");
-                    $stmt->bind_param("si", $clientName, $companies[$companyName]);
-                    $stmt->execute();
-                    $subClientId = $conn->insert_id;
+                    $companyId = $companies[$companyName];
+                    $subClientKey = $clientName . '|' . $companyId;
+                    
+                    // Verificar se este sub-cliente já existe para evitar duplicatas
+                    if (!isset($subClients[$subClientKey])) {
+                        try {
+                            $stmt = $conn->prepare("INSERT INTO sub_clients (name, company_id) VALUES (?, ?)");
+                            $stmt->bind_param("si", $clientName, $companyId);
+                            $stmt->execute();
+                            $subClientId = $conn->insert_id;
+                            $subClients[$subClientKey] = $subClientId;
+                        } catch (Exception $e) {
+                            // Se ocorrer erro de duplicidade, buscar o ID existente
+                            if ($conn->errno == 1062) { // Duplicate entry error
+                                $stmt = $conn->prepare("SELECT id FROM sub_clients WHERE name = ? AND company_id = ?");
+                                $stmt->bind_param("si", $clientName, $companyId);
+                                $stmt->execute();
+                                $result = $stmt->get_result();
+                                if ($row = $result->fetch_assoc()) {
+                                    $subClientId = $row['id'];
+                                    $subClients[$subClientKey] = $subClientId;
+                                }
+                            } else {
+                                throw $e; // Re-lança o erro se não for duplicidade
+                            }
+                        }
+                    } else {
+                        $subClientId = $subClients[$subClientKey];
+                    }
                     
                     // Inserir número vinculado ao subcliente
-                    $stmt = $conn->prepare("INSERT INTO phone_numbers (number, user_id, sub_client_id) VALUES (?, ?, ?)");
-                    $stmt->bind_param("sii", $number, $companies[$companyName], $subClientId);
+                    $stmt = $conn->prepare("INSERT INTO phone_numbers (number, sub_client_id) VALUES (?, ?)");
+                    $stmt->bind_param("si", $number, $subClientId);
                     $stmt->execute();
                 }
             } else {
@@ -375,6 +408,7 @@ try {
     
     // Commit da transação
     $conn->commit();
+    $transaction_active = false;
     
     // Gerar relatório
     echo "Relatório de Importação:\n";
@@ -401,7 +435,8 @@ try {
     }
     
 } catch (Exception $e) {
-    if ($conn->in_transaction) {
+    // Verifica se a transação está ativa antes de fazer rollback
+    if ($transaction_active) {
         $conn->rollback();
     }
     echo "Erro durante a importação: " . $e->getMessage() . "\n";
