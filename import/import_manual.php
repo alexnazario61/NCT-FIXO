@@ -4,6 +4,61 @@ ini_set('display_errors', 1);
 
 require_once '../config/connection.php';
 
+// Função para verificar se uma tabela existe
+function tableExists($conn, $tableName) {
+    $result = $conn->query("SHOW TABLES LIKE '{$tableName}'");
+    return $result->num_rows > 0;
+}
+
+// Função para criar as tabelas necessárias se não existirem
+function createTablesIfNotExist($conn) {
+    // Definição da tabela users
+    if (!tableExists($conn, 'users')) {
+        $sql = "CREATE TABLE `users` (
+            `id` int(11) NOT NULL AUTO_INCREMENT,
+            `name` varchar(255) NOT NULL,
+            `is_company` tinyint(1) NOT NULL DEFAULT 0,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `name` (`name`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
+        $conn->query($sql);
+        echo "Tabela 'users' criada com sucesso!\n";
+    }
+
+    // Definição da tabela sub_clients
+    if (!tableExists($conn, 'sub_clients')) {
+        $sql = "CREATE TABLE `sub_clients` (
+            `id` int(11) NOT NULL AUTO_INCREMENT,
+            `name` varchar(255) NOT NULL,
+            `company_id` int(11) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `name_company` (`name`, `company_id`),
+            KEY `company_id` (`company_id`),
+            CONSTRAINT `sub_clients_ibfk_1` FOREIGN KEY (`company_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
+        $conn->query($sql);
+        echo "Tabela 'sub_clients' criada com sucesso!\n";
+    }
+
+    // Definição da tabela phone_numbers
+    if (!tableExists($conn, 'phone_numbers')) {
+        $sql = "CREATE TABLE `phone_numbers` (
+            `id` int(11) NOT NULL AUTO_INCREMENT,
+            `number` varchar(20) NOT NULL,
+            `user_id` int(11) DEFAULT NULL,
+            `sub_client_id` int(11) DEFAULT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `number` (`number`),
+            KEY `user_id` (`user_id`),
+            KEY `sub_client_id` (`sub_client_id`),
+            CONSTRAINT `phone_numbers_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+            CONSTRAINT `phone_numbers_ibfk_2` FOREIGN KEY (`sub_client_id`) REFERENCES `sub_clients` (`id`) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
+        $conn->query($sql);
+        echo "Tabela 'phone_numbers' criada com sucesso!\n";
+    }
+}
+
 $data = <<<EOD
 11 5197 2777	Camila Pereira de Mariz
 11 5197 2785	
@@ -253,6 +308,9 @@ $data = <<<EOD
 EOD;
 
 try {
+    // Cria as tabelas se não existirem
+    createTablesIfNotExist($conn);
+    
     // Inicia a transação
     $transaction_active = false;
     $conn->begin_transaction();
@@ -264,11 +322,11 @@ try {
     $invalidNumbers = [];
     $totalNumbers = 0;
     
-    // Limpa as tabelas
+    // Limpa as tabelas apenas se elas existirem
     $conn->query("SET FOREIGN_KEY_CHECKS = 0");
-    $conn->query("TRUNCATE TABLE phone_numbers");
-    $conn->query("TRUNCATE TABLE users");
-    $conn->query("TRUNCATE TABLE sub_clients");
+    if (tableExists($conn, 'phone_numbers')) $conn->query("TRUNCATE TABLE phone_numbers");
+    if (tableExists($conn, 'sub_clients')) $conn->query("TRUNCATE TABLE sub_clients");
+    if (tableExists($conn, 'users')) $conn->query("TRUNCATE TABLE users");
     $conn->query("SET FOREIGN_KEY_CHECKS = 1");
     
     // Converte os dados em array
@@ -442,3 +500,4 @@ try {
     echo "Erro durante a importação: " . $e->getMessage() . "\n";
     error_log($e->getTraceAsString());
 }
+?>
